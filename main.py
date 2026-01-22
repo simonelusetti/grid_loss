@@ -1,23 +1,28 @@
 import argparse
 import json
+import os
 import numpy as np
 import prettytable as pt
 import torch
-import torch.autograd
 import torch.nn as nn
 import transformers
 from sklearn.metrics import precision_recall_fscore_support, f1_score
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from tqdm import tqdm
 
 import config
 import data_loader
 import utils
 from model import Model
 
+torch.set_num_threads(os.cpu_count())
+torch.set_num_interop_threads(os.cpu_count())
 
 class Trainer(object):
-    def __init__(self, model):
+    def __init__(self, model, device="cpu"):
         self.model = model
+        self.device = device
         self.criterion = nn.CrossEntropyLoss()
 
         bert_params = set(self.model.bert.parameters())
@@ -35,7 +40,7 @@ class Trainer(object):
              'weight_decay': config.weight_decay},
         ]
 
-        self.optimizer = transformers.AdamW(params, lr=config.learning_rate, weight_decay=config.weight_decay)
+        self.optimizer = AdamW(params, lr=config.learning_rate, weight_decay=config.weight_decay)
         self.scheduler = transformers.get_linear_schedule_with_warmup(self.optimizer,
                                                                       num_warmup_steps=config.warm_factor * updates_total,
                                                                       num_training_steps=updates_total)
@@ -46,8 +51,8 @@ class Trainer(object):
         pred_result = []
         label_result = []
 
-        for i, data_batch in enumerate(data_loader):
-            data_batch = [data.cuda() for data in data_batch[:-1]]
+        for data_batch in tqdm(data_loader, desc=f"Training epoch {epoch}"):
+            data_batch = [data.to(self.device) for data in data_batch[:-1]]
 
             bert_inputs, grid_labels, grid_mask2d, pieces2word, dist_inputs, sent_length = data_batch
 
@@ -97,7 +102,7 @@ class Trainer(object):
         with torch.no_grad():
             for i, data_batch in enumerate(data_loader):
                 entity_text = data_batch[-1]
-                data_batch = [data.cuda() for data in data_batch[:-1]]
+                data_batch = [data.to(self.device) for data in data_batch[:-1]]
                 bert_inputs, grid_labels, grid_mask2d, pieces2word, dist_inputs, sent_length = data_batch
 
                 outputs = model(bert_inputs, grid_mask2d, dist_inputs, pieces2word, sent_length)
@@ -155,7 +160,7 @@ class Trainer(object):
             for data_batch in data_loader:
                 sentence_batch = data[i:i+config.batch_size]
                 entity_text = data_batch[-1]
-                data_batch = [data.cuda() for data in data_batch[:-1]]
+                data_batch = [data.to(self.device) for data in data_batch[:-1]]
                 bert_inputs, grid_labels, grid_mask2d, pieces2word, dist_inputs, sent_length = data_batch
 
                 outputs = model(bert_inputs, grid_mask2d, dist_inputs, pieces2word, sent_length)
@@ -218,7 +223,7 @@ class Trainer(object):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='./config/conll03.json')
+    parser.add_argument('--config', type=str, default='./config/cadec.json')
     parser.add_argument('--save_path', type=str, default='./model.pt')
     parser.add_argument('--predict_path', type=str, default='./output.json')
     parser.add_argument('--device', type=int, default=0)
@@ -260,8 +265,9 @@ if __name__ == '__main__':
     logger.info(config)
     config.logger = logger
 
+    device = torch.device("cuda:{}".format(args.device) if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
-        torch.cuda.set_device(args.device)
+        torch.cuda.set_device(device)
 
     # random.seed(config.seed)
     # np.random.seed(config.seed)
@@ -278,7 +284,7 @@ if __name__ == '__main__':
                    batch_size=config.batch_size,
                    collate_fn=data_loader.collate_fn,
                    shuffle=i == 0,
-                   num_workers=4,
+                   num_workers=0,
                    drop_last=i == 0)
         for i, dataset in enumerate(datasets)
     )
@@ -288,9 +294,9 @@ if __name__ == '__main__':
     logger.info("Building Model")
     model = Model(config)
 
-    model = model.cuda()
+    model = model.to(device)
 
-    trainer = Trainer(model)
+    trainer = Trainer(model, device=device)
 
     best_f1 = 0
     best_test_f1 = 0
