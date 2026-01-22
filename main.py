@@ -6,10 +6,12 @@ import prettytable as pt
 import torch
 import torch.nn as nn
 import transformers
+import random
 from sklearn.metrics import precision_recall_fscore_support, f1_score
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from tqdm import tqdm
+from torch.utils.data import Subset
 
 import config
 import data_loader
@@ -57,7 +59,7 @@ class Trainer(object):
             bert_inputs, grid_labels, grid_mask2d, pieces2word, dist_inputs, sent_length = data_batch
 
             outputs = model(bert_inputs, grid_mask2d, dist_inputs, pieces2word, sent_length)
-
+            
             grid_mask2d = grid_mask2d.clone()
             loss = self.criterion(outputs[grid_mask2d], grid_labels[grid_mask2d])
 
@@ -280,10 +282,11 @@ if __name__ == '__main__':
     datasets, ori_data = data_loader.load_data_bert(config)
 
     train_loader, dev_loader, test_loader = (
-        DataLoader(dataset=dataset,
+        DataLoader(dataset=Subset(dataset,random.sample(range(len(dataset)), int(0.1*len(dataset))))\
+                    if i==0 else dataset, #-1 means no subsetting
                    batch_size=config.batch_size,
                    collate_fn=data_loader.collate_fn,
-                   shuffle=i == 0,
+                   shuffle=(i == 0),
                    num_workers=0,
                    drop_last=i == 0)
         for i, dataset in enumerate(datasets)

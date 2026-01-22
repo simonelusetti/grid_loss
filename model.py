@@ -250,4 +250,14 @@ class Model(nn.Module):
         conv_outputs = torch.masked_fill(conv_outputs, grid_mask2d.eq(0).unsqueeze(-1), 0.0)
         outputs = self.predictor(word_reps, word_reps, conv_outputs)
 
+        K, lam = 5, 0.7
+        Z = outputs.permute(0, 3, 1, 2).contiguous()
+        Z_k = Z.clone()
+        Z_acc = torch.zeros_like(Z)
+        for _ in range(2, K + 1):
+            Z_acc = Z_acc + (Z + Z_k.transpose(-1, -2))
+            Z_k = torch.logsumexp(Z_k.unsqueeze(-1) + Z.unsqueeze(-3),dim=-2)
+        Z_new = (1 - lam) * Z + lam * Z_acc / (K - 1)
+        return Z_new.permute(0, 2, 3, 1).contiguous()
+        
         return outputs
